@@ -122,6 +122,7 @@ export default class GestureNav extends Plugin {
 	private completedPoint: { x: number; y: number } | null = null;
 	// repeatCandidate removed; 2-step repeat handled in recognizer
 	private activeGestureDocument: Document | null = null;
+	private contextMenuCleanup: (() => void) | null = null;
 	private recognizedGesture = false;
 	private gestureStarted = false;
 	private legacyCurrentGesture: 'left' | 'right' | 'up' | 'down' | null = null;
@@ -142,20 +143,7 @@ export default class GestureNav extends Plugin {
 	}
 
 	onunload() {
-		this.activeGestureDocument = null;
-
-		if (this.canvas) {
-			this.canvas.remove();
-			this.canvas = null;
-			this.ctx = null;
-		}
-
-		if (this.overlay) {
-			this.overlay.remove();
-			this.overlay = null;
-		}
-
-		this.drawing = false;
+		this.resetGestureInteraction();
 	}
 
 	async loadSettings() {
@@ -224,6 +212,22 @@ export default class GestureNav extends Plugin {
 	private ctx: CanvasRenderingContext2D | null = null;
 	private drawing = false; // Keep track if we are currently drawing
 
+	private resetGestureInteraction() {
+		this.activeGestureDocument = null;
+		this.contextMenuCleanup?.();
+		this.contextMenuCleanup = null;
+		this.stopDrawing();
+		this.hideGestureOverlay();
+		this.gestureCanceled = false;
+		this.completedGestureType = null;
+		this.completedPoint = null;
+		this.recognizedGesture = false;
+		this.gestureStarted = false;
+		this.recognizer.start(0, 0);
+		this.legacyStartPoint = null;
+		this.legacyCurrentGesture = null;
+	}
+
 	private registerEvents(currentWindow: Window) {
 		const doc: Document = currentWindow.document;
 		this.registeredDocs.add(doc);
@@ -252,17 +256,8 @@ export default class GestureNav extends Plugin {
 			}
 
 			// Every trigger press starts clean, including presses outside the editor.
-			this.activeGestureDocument = null;
-			this.stopDrawing();
-			this.hideGestureOverlay();
-			this.gestureCanceled = false;
-			this.completedGestureType = null;
-			this.completedPoint = null;
-			this.recognizedGesture = false;
-			this.gestureStarted = false;
+			this.resetGestureInteraction();
 			this.recognizer.start(evt.clientX, evt.clientY);
-			this.legacyStartPoint = null;
-			this.legacyCurrentGesture = null;
 
 			if (this.isSettingsVisible() || !isEditMode(this.getCurrentViewOfType())) {
 				doc.removeEventListener('contextmenu', contextMenuBlocker, true);
@@ -270,6 +265,7 @@ export default class GestureNav extends Plugin {
 			}
 
 			doc.addEventListener('contextmenu', contextMenuBlocker, true);
+			this.contextMenuCleanup = () => doc.removeEventListener('contextmenu', contextMenuBlocker, true);
 			this.activeGestureDocument = doc;
 			this.startDrawing(evt);
 			if (!this.isModernEngine()) {
@@ -351,8 +347,13 @@ export default class GestureNav extends Plugin {
 		// When the right mouse button is released, execute the corresponding gesture action
 		this.registerDomEvent(doc, 'mouseup', (evt: MouseEvent) => {
 			if (evt.button === this.settings.trigerkey) {
-				if (this.activeGestureDocument !== doc) return;
+				if (this.activeGestureDocument !== doc) {
+					// A release in another window ends the source interaction without an action.
+					if (this.activeGestureDocument) this.resetGestureInteraction();
+					return;
+				}
 				this.activeGestureDocument = null;
+				// Retain the blocker until the next press to suppress a trailing native menu.
 				this.stopDrawing();
 				if (!this.isModernEngine()) {
 					if (this.legacyCurrentGesture) {
@@ -459,10 +460,6 @@ export default class GestureNav extends Plugin {
 	
 	// Stop drawing and remove the canvas if necessary
 	private stopDrawing() {
-		if (!this.settings.enableDrawing) {
-			return; // Do nothing if drawing is disabled
-		}
-	
 		this.drawing = false;
 		if (this.canvas) {
 			this.canvas.remove();
