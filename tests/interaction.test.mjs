@@ -33,12 +33,38 @@ class MockDocument {
 		this.body = this.createElement();
 		this.target = this.createElement();
 	}
-	createElement() {
-		return {
-			classList: { add() {}, contains() { return false; } },
-			appendChild() {}, remove() {}, closest() { return null; },
-			dispatchEvent: (event) => this.dispatch(event),
+	createElement(tagName = 'div') {
+		const classes = new Set();
+		const element = {
+			tagName: tagName.toUpperCase(), ownerDocument: this, parentElement: null, children: [],
+			classList: { add: (...names) => names.forEach((name) => classes.add(name)), contains: (name) => classes.has(name) },
+			appendChild(child) {
+				child.remove();
+				child.parentElement = this;
+				child.ownerDocument = this.ownerDocument;
+				this.children.push(child);
+			},
+			remove() {
+				if (this.parentElement) {
+					this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+					this.parentElement = null;
+				}
+			},
+			closest() { return null; },
+			dispatchEvent: (event) => {
+				event.target ??= element;
+				return this.dispatch(event);
+			},
 		};
+		if (tagName === 'canvas') {
+			const calls = [];
+			const context = Object.fromEntries(['beginPath', 'moveTo', 'lineTo', 'stroke'].map(
+				(method) => [method, (...args) => calls.push([method, ...args])],
+			));
+			context.calls = calls;
+			element.getContext = (kind) => kind === '2d' ? context : null;
+		}
+		return element;
 	}
 	addEventListener(type, callback, capture = false) {
 		const listeners = this.listeners.get(type) ?? [];
@@ -52,9 +78,15 @@ class MockDocument {
 			(entry) => entry.callback !== callback || entry.capture !== capture,
 		));
 	}
-	querySelector() { return this.settingsVisible ? { style: { display: 'block' } } : null; }
+	querySelector(selector) {
+		if (selector === '.modal-container') return this.settingsVisible ? { style: { display: 'block' } } : null;
+		const find = (element) => element.classList.contains(selector.slice(1)) ? element
+			: element.children.map(find).find(Boolean);
+		return find(this.body) ?? null;
+	}
 	elementFromPoint() { return this.target; }
 	dispatch(event) {
+		this.beforeDispatch?.();
 		event.target ??= this.target;
 		event.view ??= this.defaultView;
 		for (const { callback } of [...(this.listeners.get(event.type) ?? [])]) callback(event);
@@ -71,10 +103,12 @@ class MockDocument {
 async function harness(settings = {}) {
 	const doc = new MockDocument();
 	const actions = [];
-	const win = {
-		document: doc,
+	const makeWindow = (document) => ({
+		document, innerWidth: 1024, innerHeight: 768,
+		getComputedStyle: () => ({ getPropertyValue: () => '#123456' }),
 		history: { back: () => actions.push('back'), forward: () => actions.push('forward') },
-	};
+	});
+	const win = makeWindow(doc);
 	doc.defaultView = win;
 	const workspace = {
 		mode: 'source',
@@ -98,14 +132,23 @@ async function harness(settings = {}) {
 		}
 	}
 	const module = { exports: {} };
-	vm.runInNewContext(outputFiles[0].text, {
+	const runtime = {
 		module, exports: module.exports, window: win, activeWindow: win, activeDocument: doc,
-		MouseEvent: MockMouseEvent, createDiv: () => doc.createElement(), console,
+		MouseEvent: MockMouseEvent, createDiv: () => runtime.activeDocument.createElement(),
+		createEl: (tagName) => runtime.activeDocument.createElement(tagName), console,
 		require: (name) => {
 			assert.equal(name, 'obsidian');
 			return { Plugin, PluginSettingTab: class {}, MarkdownView: class {}, Notice: class {} };
 		},
-	});
+	};
+	const trackActiveDocument = (document) => {
+		document.beforeDispatch = () => {
+			runtime.activeDocument = document;
+			runtime.activeWindow = document.defaultView;
+		};
+	};
+	trackActiveDocument(doc);
+	vm.runInNewContext(outputFiles[0].text, runtime);
 	const plugin = new module.exports.default();
 	await plugin.onload();
 	const trigger = settings.trigerkey ?? 2;
@@ -117,7 +160,8 @@ async function harness(settings = {}) {
 	const syntheticMenus = () => doc.menus.filter((event) => !event.isTrusted);
 	const openWindow = () => {
 		const otherDoc = new MockDocument();
-		otherDoc.defaultView = { document: otherDoc };
+		otherDoc.defaultView = makeWindow(otherDoc);
+		trackActiveDocument(otherDoc);
 		workspace.onWindowOpen({ win: otherDoc.defaultView });
 		return otherDoc;
 	};
@@ -228,14 +272,55 @@ for (const engine of ['modern-v2', 'legacy-v1']) {
 		assert.deepEqual(h.actions, ['back']);
 	});
 
-	test(`${engine}: mouseup in another window cannot consume the editor gesture`, async () => {
-		const h = await harness({ gestureEngine: engine });
+	test(`${engine}: trigger release in another window cancels and cleans up the source gesture`, async () => {
+		const h = await harness({ gestureEngine: engine, enableDrawing: true });
 		const otherDoc = h.openWindow();
 		h.down(); h.move(180);
+		const canvas = h.doc.querySelector('.gesture-canvas');
+		assert.ok(canvas, 'the source gesture must draw a canvas');
+		assert.ok(h.doc.querySelector('.gesture-overlay'), 'the source gesture must display its recognized direction');
+		const drawCalls = canvas.getContext('2d').calls;
+		assert.ok(drawCalls.some(([method]) => method === 'stroke'));
+		const drawnBeforeRelease = drawCalls.length;
+		assert.equal(h.nativeMenu().defaultPrevented, true);
 		otherDoc.trusted('mouseup');
 		assert.deepEqual(h.actions, []);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), null, 'foreign release must remove the source canvas');
+		assert.equal(h.doc.querySelector('.gesture-overlay'), null, 'foreign release must remove the source overlay');
+		assert.equal(h.nativeMenu().defaultPrevented, false, 'foreign release must remove the source menu blocker');
+		assert.equal(otherDoc.trusted('contextmenu').defaultPrevented, false);
+		h.move(100);
+		h.up();
+		assert.equal(drawCalls.length, drawnBeforeRelease, 'later source movement must not extend the abandoned stroke');
+		assert.deepEqual(h.actions, [], 'later source events must not revive the abandoned gesture');
+		assert.equal(h.syntheticMenus().length, 0);
+		h.gesture();
+		assert.deepEqual(h.actions, ['back']);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), null);
+		assert.equal(h.doc.querySelector('.gesture-overlay'), null);
+	});
+
+	test(`${engine}: a foreign non-trigger release preserves the source gesture`, async () => {
+		const h = await harness({ gestureEngine: engine, enableDrawing: true });
+		const otherDoc = h.openWindow();
+		h.down(); h.move(180);
+		const canvas = h.doc.querySelector('.gesture-canvas');
+		const overlay = h.doc.querySelector('.gesture-overlay');
+		assert.ok(canvas);
+		assert.ok(overlay);
+		const drawCalls = canvas.getContext('2d').calls;
+		const drawnBeforeRelease = drawCalls.length;
+		otherDoc.trusted('mouseup', { button: 0 });
+		assert.deepEqual(h.actions, []);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), canvas);
+		assert.equal(h.doc.querySelector('.gesture-overlay'), overlay);
+		assert.equal(h.nativeMenu().defaultPrevented, true);
+		h.move(150);
+		assert.ok(drawCalls.length > drawnBeforeRelease, 'the original drag must continue drawing');
 		h.up();
 		assert.deepEqual(h.actions, ['back']);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), null);
+		assert.equal(h.doc.querySelector('.gesture-overlay'), null);
 	});
 
 	test(`${engine}: mousemove in another window cannot create a gesture`, async () => {
@@ -249,15 +334,27 @@ for (const engine of ['modern-v2', 'legacy-v1']) {
 	});
 
 	test(`${engine}: a new trigger press replaces an unfinished gesture in another window`, async () => {
-		const h = await harness({ gestureEngine: engine });
+		const h = await harness({ gestureEngine: engine, enableDrawing: true });
 		const otherDoc = h.openWindow();
 		h.down(); h.move(180);
+		const oldCanvas = h.doc.querySelector('.gesture-canvas');
+		assert.ok(oldCanvas);
+		assert.ok(h.doc.querySelector('.gesture-overlay'));
+		const oldDrawCalls = oldCanvas.getContext('2d').calls;
+		const oldDrawCount = oldDrawCalls.length;
+		assert.equal(h.nativeMenu().defaultPrevented, true);
 		otherDoc.trusted('mousedown');
-		h.up();
 		assert.deepEqual(h.actions, []);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), null, 'a replacement press must remove the old canvas');
+		assert.equal(h.doc.querySelector('.gesture-overlay'), null, 'a replacement press must remove the old overlay');
+		assert.equal(h.nativeMenu().defaultPrevented, false, 'a replacement press must remove the old document blocker');
+		assert.ok(otherDoc.querySelector('.gesture-canvas'), 'the new document must own the replacement stroke');
 		otherDoc.trusted('mousemove', { clientX: 420 });
 		otherDoc.trusted('mouseup');
 		assert.deepEqual(h.actions, ['forward']);
+		assert.equal(oldDrawCalls.length, oldDrawCount);
+		assert.equal(otherDoc.querySelector('.gesture-canvas'), null);
+		assert.equal(otherDoc.querySelector('.gesture-overlay'), null);
 	});
 
 	test(`${engine}: unloading removes a lingering native context-menu blocker`, async () => {
