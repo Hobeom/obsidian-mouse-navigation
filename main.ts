@@ -111,8 +111,6 @@ const isEditMode = (markdownView: MarkdownView | null) => {
 	return mode === 'source' && markdownView.editor !== null;
 };
 
-let globalMouseDown = false;
-
 export default class GestureNav extends Plugin {
 	settings: GestureNavSettings;
 	private recognizer = new GestureRecognizer({
@@ -123,7 +121,7 @@ export default class GestureNav extends Plugin {
 	private completedGestureType: 'two' | null = null;
 	private completedPoint: { x: number; y: number } | null = null;
 	// repeatCandidate removed; 2-step repeat handled in recognizer
-	private contextMenuBlocker: ((event: MouseEvent) => void) | null = null;
+	private activeGestureDocument: Document | null = null;
 	private recognizedGesture = false;
 	private gestureStarted = false;
 	private legacyCurrentGesture: 'left' | 'right' | 'up' | 'down' | null = null;
@@ -144,6 +142,8 @@ export default class GestureNav extends Plugin {
 	}
 
 	onunload() {
+		this.activeGestureDocument = null;
+
 		if (this.canvas) {
 			this.canvas.remove();
 			this.canvas = null;
@@ -240,49 +240,49 @@ export default class GestureNav extends Plugin {
 				event.stopPropagation();
 			}
 		};
-		this.contextMenuBlocker = contextMenuBlocker;
+		this.register(() => {
+			doc.removeEventListener('contextmenu', contextMenuBlocker, true);
+			this.registeredDocs.delete(doc);
+		});
 
 		// Detect when the right mouse button is pressed
 		this.registerDomEvent(doc, 'mousedown', (evt: MouseEvent) => {
-			if (this.isSettingsVisible()) {
+			if (evt.button !== this.settings.trigerkey) {
 				return;
 			}
-			if (evt.button === this.settings.trigerkey) {
-				if (isEditMode(this.getCurrentViewOfType())) {
-					doc.addEventListener(
-						'contextmenu',
-						contextMenuBlocker,
-						true,
-					);
-					this.startDrawing(evt);
-					globalMouseDown = true;
-					if (this.isModernEngine()) {
-						this.gestureCanceled = false;
-						this.completedGestureType = null;
-						this.completedPoint = null;
-						this.recognizedGesture = false;
-						this.gestureStarted = false;
-						this.recognizer.start(evt.clientX, evt.clientY);
-					} else {
-						this.legacyStartPoint = {
-							x: evt.clientX,
-							y: evt.clientY,
-						};
-						this.legacyCurrentGesture = null;
-					}
-				}
-				else {
-					doc.removeEventListener('contextmenu', contextMenuBlocker, true);
-				}
+
+			// Every trigger press starts clean, including presses outside the editor.
+			this.activeGestureDocument = null;
+			this.stopDrawing();
+			this.hideGestureOverlay();
+			this.gestureCanceled = false;
+			this.completedGestureType = null;
+			this.completedPoint = null;
+			this.recognizedGesture = false;
+			this.gestureStarted = false;
+			this.recognizer.start(evt.clientX, evt.clientY);
+			this.legacyStartPoint = null;
+			this.legacyCurrentGesture = null;
+
+			if (this.isSettingsVisible() || !isEditMode(this.getCurrentViewOfType())) {
+				doc.removeEventListener('contextmenu', contextMenuBlocker, true);
+				return;
+			}
+
+			doc.addEventListener('contextmenu', contextMenuBlocker, true);
+			this.activeGestureDocument = doc;
+			this.startDrawing(evt);
+			if (!this.isModernEngine()) {
+				this.legacyStartPoint = { x: evt.clientX, y: evt.clientY };
 			}
 		});
 
 		// Track mouse movement to detect gestures, but do not execute actions yet
 		this.registerDomEvent(doc, 'mousemove', (evt: MouseEvent) => {
-			if (this.drawing) {
-				this.draw(evt.clientX, evt.clientY);
-			}
-			if (globalMouseDown) {
+			if (this.activeGestureDocument === doc) {
+				if (this.drawing) {
+					this.draw(evt.clientX, evt.clientY);
+				}
 				if (!this.isModernEngine()) {
 					if (!this.legacyStartPoint) return;
 					const gestureMargin = 75;
@@ -350,9 +350,10 @@ export default class GestureNav extends Plugin {
 
 		// When the right mouse button is released, execute the corresponding gesture action
 		this.registerDomEvent(doc, 'mouseup', (evt: MouseEvent) => {
-			this.stopDrawing();
 			if (evt.button === this.settings.trigerkey) {
-				globalMouseDown = false;
+				if (this.activeGestureDocument !== doc) return;
+				this.activeGestureDocument = null;
+				this.stopDrawing();
 				if (!this.isModernEngine()) {
 					if (this.legacyCurrentGesture) {
 						this.showGestureOverlayByPattern([this.legacyCurrentGesture]);
