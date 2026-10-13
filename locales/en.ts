@@ -42,6 +42,10 @@ export const en = {
 				legacy: 'Legacy (v1)',
 			},
 		},
+		enableDiagonalGestures: {
+			name: 'Enable diagonal gestures',
+			desc: 'Enable straight diagonal gestures in the Modern engine (off by default). The default ↗ action reloads the Obsidian app.',
+		},
 		newTabBehavior: {
 			name: 'New tab behavior',
 			desc: 'Choose what happens when "New tab" is triggered',
@@ -84,6 +88,10 @@ export const en = {
 		right: 'Right',
 		up: 'Up',
 		down: 'Down',
+		'up-right': 'Up-right diagonal',
+		'down-left': 'Down-left diagonal',
+		'down-right': 'Down-right diagonal',
+		'up-left': 'Up-left diagonal',
 		'down,left': 'Down + Left',
 		'down,right': 'Down + Right',
 		'up,left': 'Up + Left',

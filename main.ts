@@ -25,6 +25,7 @@ interface GestureNavSettings {
 	lineWidth: number;   
 	gestureBindings: Record<string, ActionId>;
 	gestureEngine: GestureEngine;
+	enableDiagonalGestures: boolean;
 	language: Locale;
 	showContextMenuOnCancel: boolean;
 	newTabBehavior: NewTabBehavior;
@@ -58,6 +59,7 @@ const DEFAULT_SETTINGS: GestureNavSettings = {
 	lineWidth: 5,          
 	gestureBindings: {},
 	gestureEngine: 'modern-v2',
+	enableDiagonalGestures: false,
 	language: 'en',
 	showContextMenuOnCancel: false,
 	newTabBehavior: 'empty',
@@ -70,6 +72,10 @@ const DEFAULT_GESTURE_BINDINGS: Record<string, ActionId> = {
 	right: 'navigate-forward',
 	up: 'scroll-top',
 	down: 'scroll-bottom',
+	'up-right': 'refresh-app',
+	'down-left': 'reopen-closed-tab',
+	'down-right': 'navigate-forward',
+	'up-left': 'navigate-back',
 	'down,left': 'cycle-tab-left',
 	'down,right': 'cycle-tab-right',
 	'up,left': 'close-tab',
@@ -82,11 +88,15 @@ const DEFAULT_GESTURE_BINDINGS: Record<string, ActionId> = {
 	'LR-LR': 'split-horizontal',
 };
 
-const GESTURE_META: { key: string; icon: string }[] = [
+const GESTURE_META: { key: string; icon: string; diagonal?: boolean }[] = [
 	{ key: 'left', icon: '←' },
 	{ key: 'right', icon: '→' },
 	{ key: 'up', icon: '↑' },
 	{ key: 'down', icon: '↓' },
+	{ key: 'up-right', icon: '↗', diagonal: true },
+	{ key: 'down-left', icon: '↙', diagonal: true },
+	{ key: 'down-right', icon: '↘', diagonal: true },
+	{ key: 'up-left', icon: '↖', diagonal: true },
 	{ key: 'down,left', icon: '↵' },
 	{ key: 'down,right', icon: '↳' },
 	{ key: 'up,left', icon: '↰' },
@@ -257,6 +267,11 @@ export default class GestureNav extends Plugin {
 
 			// Every trigger press starts clean, including presses outside the editor.
 			this.resetGestureInteraction();
+			this.recognizer = new GestureRecognizer({
+				thresholdPx: 60,
+				maxSegments: 4,
+				enableDiagonals: this.isModernEngine() && this.settings.enableDiagonalGestures,
+			});
 			this.recognizer.start(evt.clientX, evt.clientY);
 
 			if (this.isSettingsVisible() || !isEditMode(this.getCurrentViewOfType())) {
@@ -313,6 +328,11 @@ export default class GestureNav extends Plugin {
 					return;
 				}
 				this.recognizer.track(evt.clientX, evt.clientY, (segments) => {
+					if (this.recognizer.isCanceled()) {
+						this.recognizedGesture = true;
+						this.cancelGesture();
+						return;
+					}
 					if (!this.gestureStarted && segments.length > 0) {
 						this.gestureStarted = true;
 					}
@@ -886,6 +906,21 @@ class GestureNavSettingTab extends PluginSettingTab {
 			);
 
 		containerEl.createEl('h3', { text: strings.sections.gestures });
+		const modernEngine = this.plugin.settings.gestureEngine === 'modern-v2';
+		if (modernEngine) {
+			new Setting(containerEl)
+				.setName(strings.settings.enableDiagonalGestures.name)
+				.setDesc(strings.settings.enableDiagonalGestures.desc)
+				.addToggle((toggle) =>
+					toggle
+						.setValue(this.plugin.settings.enableDiagonalGestures)
+						.onChange(async (value) => {
+							this.plugin.settings.enableDiagonalGestures = value;
+							await this.plugin.saveSettings();
+							this.display();
+						}),
+				);
+		}
 		containerEl.createEl('p', {
 			text: strings.gestureBindings.title,
 		});
@@ -912,6 +947,9 @@ class GestureNavSettingTab extends PluginSettingTab {
 		);
 
 		for (const meta of GESTURE_META) {
+			if (meta.diagonal && !(modernEngine && this.plugin.settings.enableDiagonalGestures)) {
+				continue;
+			}
 			const row = new Setting(containerEl)
 				.setName(`${meta.icon}  ${this.plugin.getGestureLabel(meta.key)}`)
 				.addDropdown((dropdown) =>
@@ -956,6 +994,7 @@ class GestureNavSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.gestureEngine = value as GestureEngine;
 						await this.plugin.saveSettings();
+						this.display();
 					}),
 			);
 

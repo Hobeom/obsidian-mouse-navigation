@@ -42,6 +42,10 @@ export const ko = {
 				legacy: '레거시 (v1)',
 			},
 		},
+		enableDiagonalGestures: {
+			name: '대각선 제스처 사용',
+			desc: 'Modern(신규) 엔진에서 직선 대각선 제스처를 사용합니다. 기본값은 꺼짐이며, ↗의 기본 동작은 Obsidian 앱 전체를 다시 불러옵니다.',
+		},
 		newTabBehavior: {
 			name: '새 탭 열기 동작',
 			desc: '"새 탭 열기"가 실행될 때 동작을 선택합니다',
@@ -84,6 +88,10 @@ export const ko = {
 		right: '우',
 		up: '상',
 		down: '하',
+		'up-right': '오른쪽 위 대각선',
+		'down-left': '왼쪽 아래 대각선',
+		'down-right': '오른쪽 아래 대각선',
+		'up-left': '왼쪽 위 대각선',
 		'down,left': '하 + 좌',
 		'down,right': '하 + 우',
 		'up,left': '상 + 좌',
