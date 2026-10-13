@@ -37,7 +37,20 @@ class MockDocument {
 		const classes = new Set();
 		const element = {
 			tagName: tagName.toUpperCase(), ownerDocument: this, parentElement: null, children: [],
+			settings: [],
 			classList: { add: (...names) => names.forEach((name) => classes.add(name)), contains: (name) => classes.has(name) },
+			empty() {
+				for (const child of [...this.children]) child.remove();
+				this.settings = [];
+			},
+			createEl(tag, options = {}) {
+				const child = this.ownerDocument.createElement(tag);
+				child.innerText = options.text ?? '';
+				if (options.cls) child.classList.add(options.cls);
+				this.appendChild(child);
+				return child;
+			},
+			createDiv(options) { return this.createEl('div', options); },
 			appendChild(child) {
 				child.remove();
 				child.parentElement = this;
@@ -100,9 +113,12 @@ class MockDocument {
 	}
 }
 
-async function harness(settings = {}) {
+async function harness(settings = {}, { storedData } = {}) {
 	const doc = new MockDocument();
 	const actions = [];
+	const commands = [];
+	const savedData = [];
+	let settingsTab;
 	const makeWindow = (document) => ({
 		document, innerWidth: 1024, innerHeight: 768,
 		getComputedStyle: () => ({ getPropertyValue: () => '#123456' }),
@@ -121,15 +137,51 @@ async function harness(settings = {}) {
 	};
 	class Plugin {
 		disposers = [];
-		constructor() { this.app = { workspace }; }
-		async loadData() { return { gestureEngine: 'modern-v2', enableDrawing: false, ...settings }; }
+		constructor() {
+			this.app = { workspace, commands: { executeCommandById: (id) => commands.push(id) } };
+		}
+		async loadData() {
+			return storedData === undefined ? { gestureEngine: 'modern-v2', enableDrawing: false, ...settings } : storedData;
+		}
+		async saveData(data) { savedData.push(JSON.parse(JSON.stringify(data))); }
 		register(callback) { this.disposers.push(callback); }
 		registerEvent() {}
-		addSettingTab() {}
+		addSettingTab(tab) { settingsTab = tab; }
 		registerDomEvent(target, type, callback) {
 			target.addEventListener(type, callback);
 			this.register(() => target.removeEventListener(type, callback));
 		}
+	}
+	class PluginSettingTab {
+		constructor(app) { this.app = app; this.containerEl = doc.createElement(); }
+	}
+	class Setting {
+		controls = [];
+		constructor(container) { container.settings.push(this); }
+		setName(name) { this.name = name; return this; }
+		setDesc(desc) { this.desc = desc; return this; }
+		setDisabled(disabled) { this.disabled = disabled; return this; }
+		addControl(kind, configure) {
+			const control = {
+				kind, options: {},
+				addOptions(options) { Object.assign(this.options, options); return this; },
+				setValue(value) { this.value = value; return this; },
+				setPlaceholder(value) { this.placeholder = value; return this; },
+				setLimits() { return this; },
+				setButtonText(value) { this.text = value; return this; },
+				onChange(callback) { this.callback = callback; return this; },
+				onClick(callback) { this.callback = callback; return this; },
+				async change(value) { this.value = value; await this.callback(value); },
+			};
+			this.controls.push(control);
+			configure(control);
+			return this;
+		}
+		addDropdown(configure) { return this.addControl('dropdown', configure); }
+		addToggle(configure) { return this.addControl('toggle', configure); }
+		addText(configure) { return this.addControl('text', configure); }
+		addSlider(configure) { return this.addControl('slider', configure); }
+		addButton(configure) { return this.addControl('button', configure); }
 	}
 	const module = { exports: {} };
 	const runtime = {
@@ -138,7 +190,7 @@ async function harness(settings = {}) {
 		createEl: (tagName) => runtime.activeDocument.createElement(tagName), console,
 		require: (name) => {
 			assert.equal(name, 'obsidian');
-			return { Plugin, PluginSettingTab: class {}, MarkdownView: class {}, Notice: class {} };
+			return { Plugin, PluginSettingTab, Setting, MarkdownView: class {}, Notice: class {} };
 		},
 	};
 	const trackActiveDocument = (document) => {
@@ -151,7 +203,7 @@ async function harness(settings = {}) {
 	vm.runInNewContext(outputFiles[0].text, runtime);
 	const plugin = new module.exports.default();
 	await plugin.onload();
-	const trigger = settings.trigerkey ?? 2;
+	const trigger = plugin.settings.trigerkey;
 	const down = () => doc.trusted('mousedown', { button: trigger });
 	const up = () => doc.trusted('mouseup', { button: trigger });
 	const move = (clientX, clientY = 300) => doc.trusted('mousemove', { clientX, clientY });
@@ -169,7 +221,12 @@ async function harness(settings = {}) {
 		plugin.onunload();
 		for (const dispose of plugin.disposers) dispose();
 	};
-	return { doc, workspace, actions, down, up, move, gesture, nativeMenu, syntheticMenus, openWindow, unload };
+	const settingRows = () => settingsTab.containerEl.settings;
+	const showSettings = () => settingsTab.display();
+	return {
+		doc, workspace, plugin, actions, commands, savedData, down, up, move, gesture,
+		nativeMenu, syntheticMenus, openWindow, unload, settingRows, showSettings,
+	};
 }
 
 for (const engine of ['modern-v2', 'legacy-v1']) {
@@ -376,3 +433,200 @@ for (const showContextMenuOnCancel of [false, true]) {
 		assert.deepEqual(h.actions, ['back'], 'the next gesture must recover from cancellation');
 	});
 }
+
+const diagonalCases = [
+	{ key: 'up-right', point: [420, 180], icon: '↗', label: 'Reload app', action: 'refresh-app', command: 'app:reload' },
+	{ key: 'down-left', point: [180, 420], icon: '↙', label: 'Reopen closed tab', action: 'reopen-closed-tab', command: 'workspace:undo-close-pane' },
+	{ key: 'down-right', point: [420, 420], icon: '↘', label: 'Next page', action: 'navigate-forward', history: 'forward' },
+	{ key: 'up-left', point: [180, 180], icon: '↖', label: 'Previous page', action: 'navigate-back', history: 'back' },
+];
+
+function settingRow(h, name) {
+	const row = h.settingRows().find((entry) => entry.name === name);
+	assert.ok(row, `missing setting: ${name}`);
+	return row;
+}
+
+function diagonalRows(h) {
+	return h.settingRows().filter((row) => diagonalCases.some(({ icon }) => row.name.startsWith(icon)));
+}
+
+for (const diagonal of diagonalCases) {
+	test(`modern-v2: enabled ${diagonal.key} shows its overlay and executes its default once`, async () => {
+		const h = await harness({ enableDiagonalGestures: true, enableDrawing: true });
+		h.down(); h.move(...diagonal.point);
+		const overlay = h.doc.querySelector('.gesture-overlay');
+		assert.ok(overlay);
+		assert.deepEqual(overlay.children.map((child) => child.innerText), [diagonal.icon, diagonal.label]);
+		assert.deepEqual(h.commands, [], 'recognition must not run an action until release');
+		assert.deepEqual(h.actions, []);
+		h.up(); h.up();
+		assert.deepEqual(h.commands, diagonal.command ? [diagonal.command] : []);
+		assert.deepEqual(h.actions, diagonal.history ? [diagonal.history] : []);
+		assert.equal(h.nativeMenu().defaultPrevented, true);
+		assert.equal(h.syntheticMenus().length, 0);
+		assert.equal(h.doc.querySelector('.gesture-overlay'), null);
+		assert.equal(h.doc.querySelector('.gesture-canvas'), null);
+	});
+}
+
+test('modern-v2: diagonals default off and keep the previous cardinal interpretation', async () => {
+	const h = await harness({ gestureBindings: { up: 'navigate-back' } });
+	assert.equal(h.plugin.settings.enableDiagonalGestures, false);
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.actions, ['back']);
+	assert.deepEqual(h.commands, [], 'an opt-out diagonal must not reload the app');
+});
+
+test('legacy-v1: a saved diagonal preference does not enable diagonal recognition', async () => {
+	const h = await harness({ gestureEngine: 'legacy-v1', enableDiagonalGestures: true });
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.actions, []);
+	assert.deepEqual(h.commands, []);
+	assert.equal(h.syntheticMenus().length, 1);
+	h.gesture();
+	assert.deepEqual(h.actions, ['back'], 'existing legacy cardinal gestures must still work');
+});
+
+test('settings: new and upgraded installations opt out while preserving existing bindings', async () => {
+	const fresh = await harness({}, { storedData: null });
+	assert.equal(fresh.plugin.settings.gestureEngine, 'modern-v2');
+	assert.equal(fresh.plugin.settings.enableDiagonalGestures, false);
+	for (const { key, action } of diagonalCases) {
+		assert.equal(fresh.plugin.settings.gestureBindings[key], action);
+	}
+	const h = await harness({}, { storedData: {
+		gestureEngine: 'modern-v2', enableDrawing: false,
+		gestureBindings: { left: 'custom-command', 'up-right': 'none' },
+		customCommandIds: { left: 'editor:undo' },
+	} });
+	assert.equal(h.plugin.settings.enableDiagonalGestures, false);
+	assert.equal(h.plugin.settings.gestureBindings.left, 'custom-command');
+	assert.equal(h.plugin.settings.customCommandIds.left, 'editor:undo');
+	assert.equal(h.plugin.settings.gestureBindings['up-right'], 'none');
+	assert.equal(h.plugin.settings.gestureBindings['down-left'], 'reopen-closed-tab');
+	h.gesture();
+	assert.deepEqual(h.commands, ['editor:undo']);
+	await h.plugin.saveSettings();
+	const reloaded = await harness({}, { storedData: h.savedData.at(-1) });
+	assert.equal(reloaded.plugin.settings.enableDiagonalGestures, false);
+	assert.equal(reloaded.plugin.settings.gestureBindings['up-right'], 'none');
+	assert.equal(reloaded.plugin.settings.customCommandIds.left, 'editor:undo');
+	const oldLegacy = await harness({}, { storedData: { enableDrawing: false } });
+	assert.equal(oldLegacy.plugin.settings.gestureEngine, 'legacy-v1');
+	assert.equal(oldLegacy.plugin.settings.enableDiagonalGestures, false);
+});
+
+test('modern-v2: each diagonal accepts an overridden action, including none and custom commands', async () => {
+	const h = await harness({
+		enableDiagonalGestures: true,
+		gestureBindings: {
+			'up-right': 'none', 'down-left': 'custom-command',
+			'down-right': 'navigate-back', 'up-left': 'undo',
+		},
+		customCommandIds: { 'down-left': 'daily-notes:goto-today' },
+	});
+	for (const { point } of diagonalCases) {
+		h.down(); h.move(...point); h.up();
+	}
+	assert.deepEqual(h.actions, ['back']);
+	assert.deepEqual(h.commands, ['daily-notes:goto-today', 'editor:undo']);
+	assert.equal(h.syntheticMenus().length, 0, 'an intentional None binding must not open a menu');
+});
+
+test('settings: diagonal selectors rerender, retain mappings, and apply toggles without restarting', async () => {
+	const h = await harness({ gestureBindings: { up: 'navigate-back' } });
+	h.showSettings();
+	assert.equal(settingRow(h, 'Enable diagonal gestures').controls[0].value, false);
+	assert.equal(diagonalRows(h).length, 0);
+	await settingRow(h, 'Enable diagonal gestures').controls[0].change(true);
+	assert.equal(diagonalRows(h).length, 4, 'enabling must immediately render every diagonal selector');
+	assert.equal(h.savedData.at(-1).enableDiagonalGestures, true);
+	const cardinalOptions = settingRow(h, '←  Left').controls[0].options;
+	for (const row of diagonalRows(h)) {
+		assert.deepEqual(row.controls[0].options, cardinalOptions, 'diagonals must offer all existing actions');
+		assert.ok(Object.hasOwn(row.controls[0].options, 'none'));
+		assert.ok(Object.hasOwn(row.controls[0].options, 'custom-command'));
+	}
+	await settingRow(h, '↗  Up-right diagonal').controls[0].change('custom-command');
+	const customField = settingRow(h, '↗  Up-right diagonal').controls.find((control) => control.kind === 'text');
+	assert.ok(customField, 'choosing a custom command must immediately expose its ID field');
+	await customField.change('  editor:undo  ');
+	assert.equal(h.savedData.at(-1).customCommandIds['up-right'], 'editor:undo');
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.commands, ['editor:undo'], 'enabling must affect the very next gesture');
+
+	await settingRow(h, 'Enable diagonal gestures').controls[0].change(false);
+	assert.equal(diagonalRows(h).length, 0);
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.actions, ['back'], 'disabling must restore cardinal recognition immediately');
+	assert.deepEqual(h.commands, ['editor:undo']);
+	await settingRow(h, 'Enable diagonal gestures').controls[0].change(true);
+	assert.equal(settingRow(h, '↗  Up-right diagonal').controls[0].value, 'custom-command');
+	assert.equal(settingRow(h, '↗  Up-right diagonal').controls[1].value, 'editor:undo');
+
+	await settingRow(h, 'Gesture engine').controls[0].change('legacy-v1');
+	assert.equal(diagonalRows(h).length, 0, 'legacy settings must hide the diagonal selectors');
+	assert.equal(h.settingRows().some((row) => row.name === 'Enable diagonal gestures'), false);
+	assert.equal(h.plugin.settings.enableDiagonalGestures, true, 'switching engines must preserve the preference');
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.commands, ['editor:undo']);
+	await settingRow(h, 'Gesture engine').controls[0].change('modern-v2');
+	assert.equal(settingRow(h, 'Enable diagonal gestures').controls[0].value, true);
+	assert.equal(diagonalRows(h).length, 4);
+	assert.equal(settingRow(h, '↗  Up-right diagonal').controls[0].value, 'custom-command');
+	h.down(); h.move(420, 180); h.up();
+	assert.deepEqual(h.commands, ['editor:undo', 'editor:undo']);
+	const reloaded = await harness({}, { storedData: h.savedData.at(-1) });
+	reloaded.down(); reloaded.move(420, 180); reloaded.up();
+	assert.deepEqual(reloaded.commands, ['editor:undo'], 'the enabled preference and custom mapping must survive reload');
+});
+
+test('modern-v2: enabled diagonals preserve a long cardinal leg followed by a two-step turn', async () => {
+	const h = await harness({
+		enableDiagonalGestures: true,
+		gestureBindings: { 'right,up': 'custom-command' },
+		customCommandIds: { 'right,up': 'test:two-step' },
+	});
+	h.down(); h.move(380); h.move(600); h.move(600, 180); h.up();
+	assert.deepEqual(h.commands, ['test:two-step']);
+	assert.deepEqual(h.actions, []);
+});
+
+for (const showContextMenuOnCancel of [false, true]) {
+	test(`modern-v2: unsupported diagonal combinations cancel with menu preference ${showContextMenuOnCancel}`, async () => {
+		for (const points of [
+			[[420, 180], [540, 180]],
+			[[420, 300], [540, 180]],
+			[[420, 180], [540, 300]],
+		]) {
+			const h = await harness({ enableDiagonalGestures: true, showContextMenuOnCancel });
+			h.down();
+			for (const point of points) h.move(...point);
+			const overlay = h.doc.querySelector('.gesture-overlay');
+			assert.ok(overlay);
+			assert.deepEqual(overlay.children.map((child) => child.innerText), ['✕', 'Cancel']);
+			h.up();
+			assert.deepEqual(h.commands, [], 'a canceled combination must not execute its first diagonal');
+			assert.deepEqual(h.actions, []);
+			assert.equal(h.syntheticMenus().length, showContextMenuOnCancel ? 1 : 0);
+			h.down(); h.move(420, 180); h.up();
+			assert.deepEqual(h.commands, ['app:reload'], 'a fresh diagonal must recover from cancellation');
+		}
+	});
+}
+
+test('modern-v2: a diagonal cannot replay on a stationary editor or non-Markdown click', async () => {
+	const h = await harness({ enableDiagonalGestures: true });
+	h.down(); h.move(420, 180); h.up();
+	h.down(); h.up();
+	assert.deepEqual(h.commands, ['app:reload']);
+	assert.equal(h.syntheticMenus().length, 1);
+	h.workspace.mode = null;
+	h.down(); h.up();
+	assert.deepEqual(h.commands, ['app:reload']);
+	assert.equal(h.nativeMenu().defaultPrevented, false);
+	h.workspace.mode = 'source';
+	h.gesture();
+	assert.deepEqual(h.actions, ['back']);
+});

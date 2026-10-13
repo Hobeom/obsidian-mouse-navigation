@@ -9,7 +9,7 @@
 - **Customizable Mouse Gestures**: Currently, navigation is performed using right-click mouse gestures to move forward, backward, or scroll up/down. 
 - **Visual Feedback**: Gesture actions are visually represented on the screen with smooth animations.
 - **Draw-on-Screen**: As you perform gestures, see your mouse movements tracked like a pencil on the screen, providing clear visual feedback.
-- **Flexible Gesture Settings**: Currently, gestures are fixed, but plans are in place for customizable gestures in future updates, allowing users to personalize their experience.
+- **Flexible Gesture Settings**: Assign built-in actions or custom Obsidian command IDs to each gesture, disable individual actions, or reset the mappings to their defaults.
 
 ## Key Capabilities
 
@@ -30,6 +30,19 @@ Once installed, simply hold the **right mouse button** and move your mouse in th
 
 ![Demo](MouseNavTest.gif)
 
-### Development Plans
+### Optional diagonal gestures
 
-We are working on introducing support for more diverse mouse gestures and allowing users to fully customize which actions are triggered by specific gestures. Stay tuned for updates that will make navigation even more flexible and powerful!
+In the plugin settings, select **Modern (v2)** as the gesture engine and turn on **Enable diagonal gestures**. This option is off by default, including for existing installations. The four diagonal action selectors appear when it is enabled; each supports the same built-in actions, custom command IDs, and **None** option as other gestures.
+
+The default mappings follow [Mouse Gesture Events](https://chromewebstore.google.com/detail/mouse-gesture-events/ogjdgjefnddnjhkibmblgiofbjdgnahc):
+
+| Gesture | Default action in Obsidian |
+| --- | --- |
+| ↗ Up-right | Reload the Obsidian app |
+| ↙ Down-left | Reopen the last closed tab |
+| ↘ Down-right | Navigate forward in history |
+| ↖ Up-left | Navigate back in history |
+
+Mouse Gesture Events uses ↗ to refresh the browser page. Here it runs the existing **Reload app** action, which reloads the Obsidian app.
+
+Draw each diagonal as a single straight stroke. Existing two-step gestures, such as ↓ →, remain available; combinations containing a diagonal are not supported. Diagonal gestures are only available in the Modern engine.
