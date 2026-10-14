@@ -22,6 +22,10 @@ export const en = {
 			name: 'Enable drawing',
 			desc: 'Toggle to enable or disable gesture drawing on the screen',
 		},
+		enableTrackpadSwipeNavigation: {
+			name: 'Enable trackpad swipe navigation',
+			desc: 'Use two-finger horizontal swipes on a touchpad to trigger left/right gesture actions (Firefox-like back/forward by default).',
+		},
 		strokeColor: {
 			name: 'Stroke color',
 			desc: 'Select the color for the gesture stroke',

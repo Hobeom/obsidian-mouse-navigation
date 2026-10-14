@@ -22,6 +22,10 @@ export const ko = {
 			name: '드로잉 활성화',
 			desc: '화면에 제스처 경로를 표시할지 여부를 설정합니다',
 		},
+		enableTrackpadSwipeNavigation: {
+			name: '트랙패드 스와이프 내비게이션 사용',
+			desc: '트랙패드에서 두 손가락 좌우 스와이프로 left/right 제스처 액션을 실행합니다 (기본 매핑은 Firefox처럼 뒤로/앞으로).',
+		},
 		strokeColor: {
 			name: '선 색상',
 			desc: '제스처 라인의 색상을 선택합니다',
