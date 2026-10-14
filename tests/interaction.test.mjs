@@ -29,6 +29,18 @@ class MockDocument {
 	listeners = new Map();
 	menus = [];
 	settingsVisible = false;
+	selection = {
+		range: null,
+		isCollapsed: true,
+		removeAllRanges() {
+			this.range = null;
+			this.isCollapsed = true;
+		},
+		addRange(range) {
+			this.range = range;
+			this.isCollapsed = false;
+		},
+	};
 	constructor() {
 		this.body = this.createElement();
 		this.target = this.createElement();
@@ -98,6 +110,32 @@ class MockDocument {
 		return find(this.body) ?? null;
 	}
 	elementFromPoint() { return this.target; }
+	getSelection() { return this.selection; }
+	createRange() {
+		return {
+			startContainer: null,
+			startOffset: 0,
+			endContainer: null,
+			endOffset: 0,
+			setStart(node, offset) {
+				this.startContainer = node;
+				this.startOffset = offset;
+			},
+			setEnd(node, offset) {
+				this.endContainer = node;
+				this.endOffset = offset;
+			},
+			collapse(toStart) {
+				if (toStart) {
+					this.endContainer = this.startContainer;
+					this.endOffset = this.startOffset;
+				} else {
+					this.startContainer = this.endContainer;
+					this.startOffset = this.endOffset;
+				}
+			},
+		};
+	}
 	dispatch(event) {
 		this.beforeDispatch?.();
 		event.target ??= this.target;
@@ -245,6 +283,17 @@ for (const engine of ['modern-v2', 'legacy-v1']) {
 		assert.equal(h.syntheticMenus().length, 1);
 		assert.equal(h.syntheticMenus()[0].defaultPrevented, false);
 		assert.equal(h.nativeMenu().defaultPrevented, true);
+	});
+
+	test(`${engine}: stationary editor click selects the clicked word before opening the synthetic menu`, async () => {
+		const h = await harness({ gestureEngine: engine });
+		const textNode = { nodeType: 3, textContent: 'spelng' };
+		h.doc.caretRangeFromPoint = () => ({ startContainer: textNode, startOffset: 3 });
+		h.down(); h.up();
+		assert.equal(h.syntheticMenus().length, 1);
+		assert.equal(h.doc.selection.range.startContainer, textNode);
+		assert.equal(h.doc.selection.range.startOffset, 0);
+		assert.equal(h.doc.selection.range.endOffset, 6);
 	});
 
 	test(`${engine}: editor gesture then stationary non-Markdown click does not replay`, async () => {

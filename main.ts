@@ -501,6 +501,7 @@ export default class GestureNav extends Plugin {
 		const doc = evt.view?.document ?? activeDocument;
 		const target = doc.elementFromPoint(evt.clientX, evt.clientY);
 		if (!target) return;
+		this.selectTextUnderCursor(evt);
 		target.dispatchEvent(
 			new MouseEvent('contextmenu', {
 				bubbles: true,
@@ -519,7 +520,55 @@ export default class GestureNav extends Plugin {
 	}
 
 	private selectTextUnderCursor(evt: MouseEvent) {
-		// TODO: Implement text selection under cursor
+		const doc = evt.view?.document ?? activeDocument;
+		const selection = doc.getSelection();
+		if (!selection || !selection.isCollapsed) return;
+
+		const docWithCaretApi = doc as Document & {
+			caretRangeFromPoint?: (x: number, y: number) => Range | null;
+			caretPositionFromPoint?: (
+				x: number,
+				y: number,
+			) => { offsetNode: Node; offset: number } | null;
+		};
+		let range: Range | null = null;
+		if (typeof docWithCaretApi.caretRangeFromPoint === 'function') {
+			range = docWithCaretApi.caretRangeFromPoint(evt.clientX, evt.clientY);
+		} else if (typeof docWithCaretApi.caretPositionFromPoint === 'function') {
+			const position = docWithCaretApi.caretPositionFromPoint(
+				evt.clientX,
+				evt.clientY,
+			);
+			if (position?.offsetNode) {
+				range = doc.createRange();
+				range.setStart(position.offsetNode, position.offset);
+				range.collapse(true);
+			}
+		}
+		if (!range || range.startContainer.nodeType !== 3) return;
+
+		const text = range.startContainer.textContent ?? '';
+		if (!text) return;
+		const isWord = (char: string) => /[\p{L}\p{N}_'-]/u.test(char);
+		let index = range.startOffset;
+		if (index >= text.length) index = text.length - 1;
+		if (index < 0) return;
+		if (!isWord(text[index])) {
+			if (index > 0 && isWord(text[index - 1])) index -= 1;
+			else return;
+		}
+
+		let start = index;
+		let end = index + 1;
+		while (start > 0 && isWord(text[start - 1])) start -= 1;
+		while (end < text.length && isWord(text[end])) end += 1;
+		if (start >= end) return;
+
+		const wordRange = doc.createRange();
+		wordRange.setStart(range.startContainer, start);
+		wordRange.setEnd(range.startContainer, end);
+		selection.removeAllRanges();
+		selection.addRange(wordRange);
 	}	
 
 	private showPreviewContextMenu(evt: MouseEvent) {
