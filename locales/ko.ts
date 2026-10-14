@@ -102,6 +102,7 @@ export const ko = {
 		'left,up': '좌 + 상',
 		'UD-UD': '상하 반복',
 		'LR-LR': '좌우 반복',
+		'right+left-click': '우클릭 유지 + 좌클릭',
 	},
 	actionLabels: {
 		none: '없음',

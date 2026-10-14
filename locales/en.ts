@@ -102,6 +102,7 @@ export const en = {
 		'left,up': 'Left + Up',
 		'UD-UD': 'Up/Down repeat',
 		'LR-LR': 'Left/Right repeat',
+		'right+left-click': 'Right hold + Left click',
 	},
 	actionLabels: {
 		none: 'None',

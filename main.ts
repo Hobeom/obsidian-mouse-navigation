@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS: GestureNavSettings = {
 	customCommandIds: {},
 };
 
+const RIGHT_LEFT_CLICK_GESTURE_KEY = 'right+left-click';
+
 const DEFAULT_GESTURE_BINDINGS: Record<string, ActionId> = {
 	left: 'navigate-back',
 	right: 'navigate-forward',
@@ -86,6 +88,7 @@ const DEFAULT_GESTURE_BINDINGS: Record<string, ActionId> = {
 	'left,up': 'prev-file',
 	'UD-UD': 'split-vertical',
 	'LR-LR': 'split-horizontal',
+	[RIGHT_LEFT_CLICK_GESTURE_KEY]: 'none',
 };
 
 const GESTURE_META: { key: string; icon: string; diagonal?: boolean }[] = [
@@ -107,6 +110,7 @@ const GESTURE_META: { key: string; icon: string; diagonal?: boolean }[] = [
 	{ key: 'left,up', icon: '⬑' },
 	{ key: 'UD-UD', icon: '⇅' },
 	{ key: 'LR-LR', icon: '⇄' },
+	{ key: RIGHT_LEFT_CLICK_GESTURE_KEY, icon: 'R+L' },
 ];
 
 const isPreviewMode = (markdownView: MarkdownView | null) => {
@@ -135,6 +139,7 @@ export default class GestureNav extends Plugin {
 	private contextMenuCleanup: (() => void) | null = null;
 	private recognizedGesture = false;
 	private gestureStarted = false;
+	private rightLeftClickGestureDetected = false;
 	private legacyCurrentGesture: 'left' | 'right' | 'up' | 'down' | null = null;
 	private legacyStartPoint: { x: number; y: number } | null = null;
 	private registeredDocs = new Set<Document>();
@@ -233,6 +238,7 @@ export default class GestureNav extends Plugin {
 		this.completedPoint = null;
 		this.recognizedGesture = false;
 		this.gestureStarted = false;
+		this.rightLeftClickGestureDetected = false;
 		this.recognizer.start(0, 0);
 		this.legacyStartPoint = null;
 		this.legacyCurrentGesture = null;
@@ -261,6 +267,13 @@ export default class GestureNav extends Plugin {
 
 		// Detect when the right mouse button is pressed
 		this.registerDomEvent(doc, 'mousedown', (evt: MouseEvent) => {
+			if (evt.button === 0 && this.activeGestureDocument === doc) {
+				this.rightLeftClickGestureDetected = true;
+				this.gestureStarted = true;
+				this.recognizedGesture = true;
+				this.showGestureOverlayByPattern([RIGHT_LEFT_CLICK_GESTURE_KEY]);
+				return;
+			}
 			if (evt.button !== this.settings.trigerkey) {
 				return;
 			}
@@ -375,6 +388,20 @@ export default class GestureNav extends Plugin {
 				this.activeGestureDocument = null;
 				// Retain the blocker until the next press to suppress a trailing native menu.
 				this.stopDrawing();
+				if (this.rightLeftClickGestureDetected) {
+					const pattern: GesturePattern = [RIGHT_LEFT_CLICK_GESTURE_KEY];
+					this.showGestureOverlayByPattern(pattern);
+					this.executeActionForPattern(pattern);
+					this.hideGestureOverlay();
+					this.recognizedGesture = false;
+					this.gestureStarted = false;
+					this.rightLeftClickGestureDetected = false;
+					if (!this.isModernEngine()) {
+						this.legacyCurrentGesture = null;
+						this.legacyStartPoint = null;
+					}
+					return;
+				}
 				if (!this.isModernEngine()) {
 					if (this.legacyCurrentGesture) {
 						this.showGestureOverlayByPattern([this.legacyCurrentGesture]);

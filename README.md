@@ -27,6 +27,7 @@
 ## Usage
 
 Once installed, simply hold the **right mouse button** and move your mouse in the desired direction to trigger the gesture action (e.g., move left to go back, right to go forward). 
+You can also map a dedicated **Right hold + Left click** gesture from settings.
 
 ![Demo](MouseNavTest.gif)
 
