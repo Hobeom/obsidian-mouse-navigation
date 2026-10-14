@@ -18,6 +18,7 @@ class MockMouseEvent {
 	constructor(type, options = {}) {
 		Object.assign(this, {
 			type, button: 2, clientX: 300, clientY: 300,
+			deltaX: 0, deltaY: 0, ctrlKey: false,
 			isTrusted: false, defaultPrevented: false, propagationStopped: false,
 		}, options);
 	}
@@ -207,6 +208,7 @@ async function harness(settings = {}, { storedData } = {}) {
 	const down = () => doc.trusted('mousedown', { button: trigger });
 	const up = () => doc.trusted('mouseup', { button: trigger });
 	const move = (clientX, clientY = 300) => doc.trusted('mousemove', { clientX, clientY });
+	const wheel = (deltaX, deltaY = 0, options = {}) => doc.trusted('wheel', { deltaX, deltaY, ...options });
 	const gesture = () => { down(); move(180); up(); };
 	const nativeMenu = () => doc.trusted('contextmenu');
 	const syntheticMenus = () => doc.menus.filter((event) => !event.isTrusted);
@@ -225,7 +227,7 @@ async function harness(settings = {}, { storedData } = {}) {
 	const showSettings = () => settingsTab.display();
 	return {
 		doc, workspace, plugin, actions, commands, savedData, down, up, move, gesture,
-		nativeMenu, syntheticMenus, openWindow, unload, settingRows, showSettings,
+		wheel, nativeMenu, syntheticMenus, openWindow, unload, settingRows, showSettings,
 	};
 }
 
@@ -629,4 +631,42 @@ test('modern-v2: a diagonal cannot replay on a stationary editor or non-Markdown
 	h.workspace.mode = 'source';
 	h.gesture();
 	assert.deepEqual(h.actions, ['back']);
+});
+
+test('trackpad swipe: disabled by default', async () => {
+	const h = await harness();
+	const evt = h.wheel(120);
+	assert.deepEqual(h.actions, []);
+	assert.equal(evt.defaultPrevented, false);
+});
+
+test('trackpad swipe: horizontal two-finger swipes trigger left/right mappings', async () => {
+	const h = await harness({ enableTrackpadSwipeNavigation: true });
+	const leftSwipe = h.wheel(120, 10);
+	await new Promise((resolve) => setTimeout(resolve, 360));
+	const rightSwipe = h.wheel(-120, 10);
+	assert.deepEqual(h.actions, ['back', 'forward']);
+	assert.equal(leftSwipe.defaultPrevented, true);
+	assert.equal(rightSwipe.defaultPrevented, true);
+});
+
+test('trackpad swipe: cooldown suppresses immediate repeats', async () => {
+	const h = await harness({ enableTrackpadSwipeNavigation: true });
+	const first = h.wheel(120, 10);
+	const second = h.wheel(120, 10);
+	assert.deepEqual(h.actions, ['back']);
+	assert.equal(first.defaultPrevented, true);
+	assert.equal(second.defaultPrevented, false);
+});
+
+test('trackpad swipe: guardrails ignore vertical, small, or non-editor gestures', async () => {
+	const h = await harness({ enableTrackpadSwipeNavigation: true });
+	h.wheel(40, 0);
+	h.wheel(120, 300);
+	h.wheel(120, 0, { ctrlKey: true });
+	assert.deepEqual(h.actions, []);
+	h.workspace.mode = null;
+	const evt = h.wheel(120, 0);
+	assert.deepEqual(h.actions, []);
+	assert.equal(evt.defaultPrevented, false);
 });

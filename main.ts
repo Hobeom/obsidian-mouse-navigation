@@ -23,6 +23,7 @@ interface GestureNavSettings {
 	strokeColor: string; 
 	customStrokeColor: string; 
 	lineWidth: number;   
+	enableTrackpadSwipeNavigation: boolean;
 	gestureBindings: Record<string, ActionId>;
 	gestureEngine: GestureEngine;
 	enableDiagonalGestures: boolean;
@@ -57,6 +58,7 @@ const DEFAULT_SETTINGS: GestureNavSettings = {
 	strokeColor: 'accent', 
 	customStrokeColor: '', 
 	lineWidth: 5,          
+	enableTrackpadSwipeNavigation: false,
 	gestureBindings: {},
 	gestureEngine: 'modern-v2',
 	enableDiagonalGestures: false,
@@ -138,6 +140,7 @@ export default class GestureNav extends Plugin {
 	private legacyCurrentGesture: 'left' | 'right' | 'up' | 'down' | null = null;
 	private legacyStartPoint: { x: number; y: number } | null = null;
 	private registeredDocs = new Set<Document>();
+	private lastTrackpadSwipeAt = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -214,6 +217,22 @@ export default class GestureNav extends Plugin {
 			return;
 		}
 		executeGesture(pattern, actionId, this.getGestureActionContext());
+	}
+
+	private handleTrackpadSwipe(evt: WheelEvent) {
+		if (!this.settings.enableTrackpadSwipeNavigation) return;
+		if (this.activeGestureDocument) return;
+		if (evt.ctrlKey) return;
+		if (Math.abs(evt.deltaX) < 80) return;
+		if (Math.abs(evt.deltaX) <= Math.abs(evt.deltaY)) return;
+		if (this.isSettingsVisible() || !isEditMode(this.getCurrentViewOfType())) return;
+
+		const now = Date.now();
+		if (now - this.lastTrackpadSwipeAt < 350) return;
+		this.lastTrackpadSwipeAt = now;
+
+		this.executeActionForPattern([evt.deltaX > 0 ? 'left' : 'right']);
+		evt.preventDefault();
 	}
 
 	private overlay: HTMLElement | null = null; // gesture overlay
@@ -362,6 +381,10 @@ export default class GestureNav extends Plugin {
 					this.showGestureOverlayBySegments(segments);
 				});
 			}
+		});
+
+		this.registerDomEvent(doc, 'wheel', (evt: WheelEvent) => {
+			this.handleTrackpadSwipe(evt);
 		});
 
 		// When the right mouse button is released, execute the corresponding gesture action
@@ -846,6 +869,18 @@ class GestureNavSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.enableDrawing)
 					.onChange(async (value) => {
 						this.plugin.settings.enableDrawing = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName(strings.settings.enableTrackpadSwipeNavigation.name)
+			.setDesc(strings.settings.enableTrackpadSwipeNavigation.desc)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableTrackpadSwipeNavigation)
+					.onChange(async (value) => {
+						this.plugin.settings.enableTrackpadSwipeNavigation = value;
 						await this.plugin.saveSettings();
 					}),
 			);

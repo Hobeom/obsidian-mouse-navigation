@@ -7,6 +7,7 @@
 ## Features
 
 - **Customizable Mouse Gestures**: Currently, navigation is performed using right-click mouse gestures to move forward, backward, or scroll up/down. 
+- **Optional Trackpad Swipe Navigation**: Enable two-finger horizontal swipes to trigger the left/right gesture actions (back/forward by default).
 - **Visual Feedback**: Gesture actions are visually represented on the screen with smooth animations.
 - **Draw-on-Screen**: As you perform gestures, see your mouse movements tracked like a pencil on the screen, providing clear visual feedback.
 - **Flexible Gesture Settings**: Assign built-in actions or custom Obsidian command IDs to each gesture, disable individual actions, or reset the mappings to their defaults.
@@ -27,6 +28,8 @@
 ## Usage
 
 Once installed, simply hold the **right mouse button** and move your mouse in the desired direction to trigger the gesture action (e.g., move left to go back, right to go forward). 
+
+If you use a laptop touchpad, you can also enable **trackpad swipe navigation** in settings to navigate with two-finger horizontal swipes (Firefox-style back/forward by default).
 
 ![Demo](MouseNavTest.gif)
 
