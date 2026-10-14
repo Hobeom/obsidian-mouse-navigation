@@ -92,7 +92,6 @@ const tryWithNotice = (label: string, fn: () => void) => {
     fn();
     return true;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error(label, err);
     return false;
   }
@@ -103,7 +102,6 @@ const getCurrentWindow = () => {
     const electron = (window as ElectronWindow).require?.('electron');
     return electron?.remote?.getCurrentWindow?.() ?? null;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('electron remote unavailable', err);
     return null;
   }

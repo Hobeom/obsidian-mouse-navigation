@@ -3,7 +3,8 @@
     "parser": "@typescript-eslint/parser",
     "env": { "node": true },
     "plugins": [
-      "@typescript-eslint"
+      "@typescript-eslint",
+      "@eslint-community/eslint-comments"
     ],
     "extends": [
       "eslint:recommended",
@@ -14,6 +15,8 @@
         "sourceType": "module"
     },
     "rules": {
+      "@eslint-community/eslint-comments/no-restricted-disable": ["error", "no-console"],
+      "no-console": ["error", { "allow": ["warn", "error", "debug"] }],
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": ["error", { "args": "none" }],
       "@typescript-eslint/ban-ts-comment": "off",
