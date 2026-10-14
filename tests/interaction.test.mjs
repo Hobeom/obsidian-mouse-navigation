@@ -329,6 +329,24 @@ for (const engine of ['modern-v2', 'legacy-v1']) {
 		assert.deepEqual(h.actions, ['back']);
 	});
 
+	test(`${engine}: right-hold + left-click is a dedicated configurable gesture`, async () => {
+		const h = await harness({
+			gestureEngine: engine,
+			gestureBindings: { 'right+left-click': 'navigate-forward' },
+		});
+		h.down();
+		h.move(180);
+		h.doc.trusted('mousedown', { button: 0 });
+		h.up();
+		assert.deepEqual(h.actions, ['forward'], 'the click chord must override a tracked stroke');
+		assert.equal(h.syntheticMenus().length, 0);
+		h.down();
+		h.doc.trusted('mousedown', { button: 0 });
+		h.up();
+		assert.deepEqual(h.actions, ['forward', 'forward']);
+		assert.equal(h.syntheticMenus().length, 0);
+	});
+
 	test(`${engine}: trigger release in another window cancels and cleans up the source gesture`, async () => {
 		const h = await harness({ gestureEngine: engine, enableDrawing: true });
 		const otherDoc = h.openWindow();
@@ -532,6 +550,13 @@ test('modern-v2: each diagonal accepts an overridden action, including none and 
 	assert.deepEqual(h.actions, ['back']);
 	assert.deepEqual(h.commands, ['daily-notes:goto-today', 'editor:undo']);
 	assert.equal(h.syntheticMenus().length, 0, 'an intentional None binding must not open a menu');
+});
+
+test('settings: right-hold + left-click selector is always available and defaults to none', async () => {
+	const h = await harness({}, { storedData: null });
+	assert.equal(h.plugin.settings.gestureBindings['right+left-click'], 'none');
+	h.showSettings();
+	assert.equal(settingRow(h, 'R+L  Right hold + Left click').controls[0].value, 'none');
 });
 
 test('settings: diagonal selectors rerender, retain mappings, and apply toggles without restarting', async () => {
