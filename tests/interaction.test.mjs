@@ -113,7 +113,7 @@ class MockDocument {
 	}
 }
 
-async function harness(settings = {}, { storedData } = {}) {
+async function harness(settings = {}, { storedData, apiVersion = '1.1.0', availableCommands = [] } = {}) {
 	const doc = new MockDocument();
 	const actions = [];
 	const commands = [];
@@ -138,7 +138,10 @@ async function harness(settings = {}, { storedData } = {}) {
 	class Plugin {
 		disposers = [];
 		constructor() {
-			this.app = { workspace, commands: { executeCommandById: (id) => commands.push(id) } };
+			this.app = { workspace, commands: {
+				executeCommandById: (id) => commands.push(id),
+				listCommands: () => availableCommands,
+			} };
 		}
 		async loadData() {
 			return storedData === undefined ? { gestureEngine: 'modern-v2', enableDrawing: false, ...settings } : storedData;
@@ -155,15 +158,44 @@ async function harness(settings = {}, { storedData } = {}) {
 	class PluginSettingTab {
 		constructor(app) { this.app = app; this.containerEl = doc.createElement(); }
 	}
+	const requireApiVersion = (minimum) => {
+		const current = apiVersion.split('.').map(Number);
+		const expected = minimum.split('.').map(Number);
+		for (let i = 0; i < expected.length; i++) {
+			if (current[i] !== expected[i]) return current[i] > expected[i];
+		}
+		return true;
+	};
+	if (requireApiVersion('1.13.0')) {
+		PluginSettingTab.prototype.update = function () {
+			this.updateCalls = (this.updateCalls ?? 0) + 1;
+			for (const cleanup of this.renderCleanups ?? []) cleanup();
+			this.renderCleanups = [];
+			this.containerEl.empty();
+			this.settingItems = this.getSettingDefinitions();
+			for (const group of this.settingItems) {
+				new Setting(this.containerEl).setName(group.heading).setHeading();
+				for (const definition of group.items) {
+					const row = new Setting(this.containerEl).setName(definition.name);
+					if (definition.desc) row.setDesc(definition.desc);
+					const cleanup = definition.render?.(row, {});
+					if (cleanup) this.renderCleanups.push(cleanup);
+				}
+			}
+		};
+	}
 	class Setting {
 		controls = [];
-		constructor(container) { container.settings.push(this); }
+		constructor(container) {
+			container.settings.push(this);
+			this.settingEl = container.createDiv();
+		}
 		setName(name) { this.name = name; return this; }
 		setDesc(desc) { this.desc = desc; return this; }
-		setDisabled(disabled) { this.disabled = disabled; return this; }
+		setHeading() { this.heading = true; return this; }
 		addControl(kind, configure) {
 			const control = {
-				kind, options: {},
+				kind, options: {}, inputEl: { disabled: false },
 				addOptions(options) { Object.assign(this.options, options); return this; },
 				setValue(value) { this.value = value; return this; },
 				setPlaceholder(value) { this.placeholder = value; return this; },
@@ -190,7 +222,7 @@ async function harness(settings = {}, { storedData } = {}) {
 		createEl: (tagName) => runtime.activeDocument.createElement(tagName), console,
 		require: (name) => {
 			assert.equal(name, 'obsidian');
-			return { Plugin, PluginSettingTab, Setting, MarkdownView: class {}, Notice: class {} };
+			return { Plugin, PluginSettingTab, Setting, requireApiVersion, MarkdownView: class {}, Notice: class {} };
 		},
 	};
 	const trackActiveDocument = (document) => {
@@ -222,10 +254,10 @@ async function harness(settings = {}, { storedData } = {}) {
 		for (const dispose of plugin.disposers) dispose();
 	};
 	const settingRows = () => settingsTab.containerEl.settings;
-	const showSettings = () => settingsTab.display();
+	const showSettings = () => requireApiVersion('1.13.0') ? settingsTab.update() : settingsTab.display();
 	return {
 		doc, workspace, plugin, actions, commands, savedData, down, up, move, gesture,
-		nativeMenu, syntheticMenus, openWindow, unload, settingRows, showSettings,
+		nativeMenu, syntheticMenus, openWindow, unload, settingRows, showSettings, settingsTab,
 	};
 }
 
@@ -534,8 +566,9 @@ test('modern-v2: each diagonal accepts an overridden action, including none and 
 	assert.equal(h.syntheticMenus().length, 0, 'an intentional None binding must not open a menu');
 });
 
-test('settings: diagonal selectors rerender, retain mappings, and apply toggles without restarting', async () => {
-	const h = await harness({ gestureBindings: { up: 'navigate-back' } });
+for (const apiVersion of ['1.1.0', '1.14.4']) {
+test(`settings: Obsidian ${apiVersion} diagonal selectors rerender, retain mappings, and apply toggles without restarting`, async () => {
+	const h = await harness({ gestureBindings: { up: 'navigate-back' } }, { apiVersion });
 	h.showSettings();
 	assert.equal(settingRow(h, 'Enable diagonal gestures').controls[0].value, false);
 	assert.equal(diagonalRows(h).length, 0);
@@ -580,6 +613,64 @@ test('settings: diagonal selectors rerender, retain mappings, and apply toggles 
 	const reloaded = await harness({}, { storedData: h.savedData.at(-1) });
 	reloaded.down(); reloaded.move(420, 180); reloaded.up();
 	assert.deepEqual(reloaded.commands, ['editor:undo'], 'the enabled preference and custom mapping must survive reload');
+});
+
+test(`settings: Obsidian ${apiVersion} preserves input disabling, reset, locale and debug controls`, async () => {
+	const h = await harness({}, { apiVersion, availableCommands: [
+		{ id: 'editor:undo', name: 'Undo' },
+		{ id: 'app:reload', name: 'Reload app' },
+	] });
+	h.showSettings();
+	assert.equal(settingRow(h, 'Custom stroke color').controls[0].inputEl.disabled, true);
+	await settingRow(h, 'Stroke color').controls[0].change('custom');
+	assert.equal(settingRow(h, 'Custom stroke color').controls[0].inputEl.disabled, false);
+	await settingRow(h, 'Custom stroke color').controls[0].change('#123456');
+	assert.equal(h.savedData.at(-1).customStrokeColor, '#123456');
+	await settingRow(h, 'Stroke color').controls[0].change('accent');
+	assert.equal(settingRow(h, 'Custom stroke color').controls[0].inputEl.disabled, true);
+	assert.equal(settingRow(h, 'Custom stroke color').controls[0].value, '#123456');
+
+	await settingRow(h, '←  Left').controls[0].change('none');
+	await settingRow(h, 'Reset gesture bindings').controls[0].change();
+	assert.equal(settingRow(h, '←  Left').controls[0].value, 'navigate-back');
+	await settingRow(h, 'Debug mode').controls[0].change(true);
+	const containers = () => h.settingsTab.containerEl.children.filter((el) => el.classList.contains('gesture-command-results'));
+	assert.equal(containers().length, 1);
+	assert.equal(containers()[0].children.length, 2);
+	await settingRow(h, 'Search commands').controls[0].change('undo');
+	assert.equal(containers()[0].children.length, 1);
+	assert.equal(containers()[0].children[0].children[0].innerText, 'editor:undo');
+	await settingRow(h, 'Search commands').controls[0].change('missing');
+	assert.equal(containers()[0].children[0].innerText, 'No commands found');
+	await settingRow(h, 'Language').controls[0].change('ko');
+	assert.equal(settingRow(h, '언어').controls[0].value, 'ko');
+	assert.equal(containers().length, 1, 'refresh must not leave duplicate command results');
+	await settingRow(h, '디버그 모드').controls[0].change(false);
+	assert.equal(containers().length, 0);
+	assert.equal(h.settingRows().some((row) => row.name === '명령 검색'), false);
+	assert.equal(h.settingRows().filter((row) => row.heading).length, 3);
+});
+}
+
+test('settings: modern definitions expose every setting to search and update after structural changes', async () => {
+	const h = await harness({}, { apiVersion: '1.14.4' });
+	const definitions = () => h.settingsTab.getSettingDefinitions().flatMap((group) => group.items);
+	const namedDefinitions = () => definitions().filter((definition) => definition.name);
+	const controls = () => h.settingRows().filter((row) => row.controls.length);
+	assert.ok(namedDefinitions().length > 20, 'definitions must contain actual settings before opening the tab');
+	h.showSettings();
+	const names = Array.from(namedDefinitions(), (definition) => definition.name);
+	assert.deepEqual(controls().map((row) => row.name), names);
+	assert.ok(definitions().find((definition) => definition.name === 'Enable diagonal gestures').desc.includes('off by default'));
+	assert.ok(namedDefinitions().every((definition) => typeof definition.render === 'function'));
+	const before = h.settingsTab.updateCalls;
+	await settingRow(h, 'Enable diagonal gestures').controls[0].change(true);
+	assert.ok(h.settingsTab.updateCalls > before, 'modern refresh must use update()');
+	assert.equal(h.settingsTab.settingItems.flatMap((group) => group.items).filter((definition) => /diagonal$/.test(definition.name)).length, 4);
+	await settingRow(h, '↗  Up-right diagonal').controls[0].change('custom-command');
+	assert.ok(definitions().find((definition) => definition.name === '↗  Up-right diagonal').desc.includes('Custom commands'));
+	await settingRow(h, 'Gesture engine').controls[0].change('legacy-v1');
+	assert.equal(definitions().filter((definition) => /diagonal/.test(definition.name)).length, 0);
 });
 
 test('modern-v2: enabled diagonals preserve a long cardinal leg followed by a two-step turn', async () => {

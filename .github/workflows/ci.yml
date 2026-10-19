@@ -34,3 +34,13 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Obsidian community scan
+        uses: obsidianmd/obsidian-workflows@8167caed39664214d82c86fdfa32e06d8d55f61d # v1.2.3
+        with:
+          type: plugin
+          mode: pr
+          build: 'false'
+          lint: 'true'
+          scanner-lint: 'true'
+          strict: 'true'
