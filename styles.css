@@ -43,7 +43,19 @@ If your plugin does not need CSS, delete this file.
 	font-size: 16px;
 }
 
+.gesture-command-search {
+	flex-wrap: wrap;
+}
+
+.gesture-command-search .setting-item-control {
+	flex-basis: 100%;
+	flex-wrap: wrap;
+}
+
 .gesture-command-results {
+	flex-basis: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 	max-height: 240px;
 	overflow: auto;
 	border: 1px solid var(--background-modifier-border);

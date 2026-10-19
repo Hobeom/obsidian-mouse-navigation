@@ -924,7 +924,11 @@ class GestureNavSettingTab extends PluginSettingTab {
 			});
 		}
 		gestures.push(
-			{ name: '', desc: strings.gestureBindings.title },
+			{
+				name: '',
+				desc: strings.gestureBindings.title,
+				render: (row) => { row.setDesc(strings.gestureBindings.title); },
+			},
 			{
 				name: strings.gestureBindings.resetName,
 				desc: strings.gestureBindings.resetDesc,
@@ -1031,7 +1035,11 @@ class GestureNavSettingTab extends PluginSettingTab {
 				type: 'group',
 				heading: strings.debug.commandsTitle,
 				items: [
-					{ name: '', desc: strings.debug.requestNote },
+					{
+						name: '',
+						desc: strings.debug.requestNote,
+						render: (row) => { row.setDesc(strings.debug.requestNote); },
+					},
 					{
 						name: strings.debug.searchLabel,
 						desc: strings.debug.searchDesc,
@@ -1045,9 +1053,8 @@ class GestureNavSettingTab extends PluginSettingTab {
 
 	private renderCommandSearch(searchSetting: Setting) {
 		const strings = getStrings(this.plugin.settings.language);
-		const parent = searchSetting.settingEl.parentElement;
-		if (!parent) return;
-		const resultsContainer = parent.createDiv({ cls: 'gesture-command-results' });
+		searchSetting.setClass('gesture-command-search');
+		const resultsContainer = searchSetting.controlEl.createDiv({ cls: 'gesture-command-results' });
 		const renderResults = (query: string) => {
 			resultsContainer.empty();
 			const q = query.trim().toLowerCase();
@@ -1070,7 +1077,7 @@ class GestureNavSettingTab extends PluginSettingTab {
 		searchSetting.addText((text) => text
 			.setPlaceholder(strings.debug.searchPlaceholder)
 			.onChange((value) => renderResults(value)));
+		searchSetting.controlEl.appendChild(resultsContainer);
 		renderResults('');
-		return () => resultsContainer.remove();
 	}
 }
