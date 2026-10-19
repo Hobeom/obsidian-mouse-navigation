@@ -3,11 +3,12 @@ import {
 	MarkdownView,
 	Plugin,
 	PluginSettingTab,
+	requireApiVersion,
 	Setting,
-	TFolder,
 	WorkspaceLeaf,
 	WorkspaceWindow,
 } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import { GestureRecognizer } from './gesture/recognizer';
 import {
 	ActionId,
@@ -43,11 +44,6 @@ type GestureEngine = 'legacy-v1' | 'modern-v2';
 type WorkspaceLeafWithParent = WorkspaceLeaf & {
 	parent?: {
 		children?: WorkspaceLeaf[];
-	};
-};
-type AppWithFileManager = App & {
-	fileManager?: {
-		getNewFileParent(path: string): TFolder;
 	};
 };
 
@@ -261,7 +257,7 @@ export default class GestureNav extends Plugin {
 
 		// Detect when the right mouse button is pressed
 		this.registerDomEvent(doc, 'mousedown', (evt: MouseEvent) => {
-			if (evt.button !== this.settings.trigerkey) {
+			if (evt.button !== Number(this.settings.trigerkey)) {
 				return;
 			}
 
@@ -366,7 +362,7 @@ export default class GestureNav extends Plugin {
 
 		// When the right mouse button is released, execute the corresponding gesture action
 		this.registerDomEvent(doc, 'mouseup', (evt: MouseEvent) => {
-			if (evt.button === this.settings.trigerkey) {
+			if (evt.button === Number(this.settings.trigerkey)) {
 				if (this.activeGestureDocument !== doc) {
 					// A release in another window ends the source interaction without an action.
 					if (this.activeGestureDocument) this.resetGestureInteraction();
@@ -441,7 +437,7 @@ export default class GestureNav extends Plugin {
 			this.canvas.height = win.innerHeight;
 	
 			doc.body.appendChild(this.canvas);
-			this.ctx = this.canvas.getContext('2d') as CanvasRenderingContext2D;
+			this.ctx = this.canvas.getContext('2d');
 	
 			let strokeColor = this.settings.strokeColor;
 			if (strokeColor === 'accent') {
@@ -512,9 +508,9 @@ export default class GestureNav extends Plugin {
 	}
 
 	private isSettingsVisible(): boolean {
-		const settingTabs = activeDocument.querySelector(
+		const settingTabs = activeDocument.querySelector<HTMLElement>(
 			'.modal-container',
-		) as HTMLElement | null;
+		);
 		return settingTabs !== null && settingTabs.style.display !== 'none';
 	}
 
@@ -648,13 +644,13 @@ export default class GestureNav extends Plugin {
 		markdownView.currentMode.applyScroll(0);
 	}
 
-	private scrollToBottom = async () => {
+	private scrollToBottom = () => {
 		const markdownView = this.getCurrentViewOfType();
 		if (markdownView === null) return;
 		markdownView.currentMode.applyScroll(Number.MAX_SAFE_INTEGER);
 	};
 
-	private navigateSibling(delta: number) {
+	private async navigateSibling(delta: number) {
 		const currentFile = this.app.workspace.getActiveFile();
 		if (!currentFile) return;
 		const folder = currentFile.parent;
@@ -669,7 +665,7 @@ export default class GestureNav extends Plugin {
 		);
 		if (currentIndex === -1 || files.length < 2) return;
 		const nextIndex = (currentIndex + delta + files.length) % files.length;
-		this.app.workspace.openLinkText(
+		await this.app.workspace.openLinkText(
 			files[nextIndex].path,
 			currentFile.path,
 			false,
@@ -710,26 +706,26 @@ export default class GestureNav extends Plugin {
 		this.app.workspace.setActiveLeaf(nextLeaf, { focus: true });
 	}
 
-	private openNewTab() {
+	private async openNewTab() {
 		if (this.settings.newTabBehavior === 'empty') {
-			this.openEmptyTab();
+			await this.openEmptyTab();
 			return;
 		}
 		if (this.settings.newTabBehavior === 'current') {
 			const activeLeaf = this.app.workspace.getLeaf(false);
-			this.app.workspace.duplicateLeaf(activeLeaf, 'tab');
+			await this.app.workspace.duplicateLeaf(activeLeaf, 'tab');
 			return;
 		}
-		this.createNewNoteInTab();
+		await this.createNewNoteInTab();
 	}
 
-	private openEmptyTab() {
+	private async openEmptyTab() {
 		try {
 			const leaf = this.app.workspace.getLeaf('tab');
-			leaf.setViewState({ type: 'empty', state: {} });
+			await leaf.setViewState({ type: 'empty', state: {} });
 			return;
 		} catch {
-			this.app.workspace.openLinkText('', '', 'tab');
+			await this.app.workspace.openLinkText('', '', 'tab');
 		}
 	}
 
@@ -740,14 +736,13 @@ export default class GestureNav extends Plugin {
 			'Untitled',
 		);
 		if (!file) return;
-		this.app.workspace.openLinkText(file.path, '', 'tab');
+		await this.app.workspace.openLinkText(file.path, '', 'tab');
 	}
 
 	private resolveNewNoteFolder() {
-		const fm = (this.app as AppWithFileManager).fileManager;
-		if (fm?.getNewFileParent) {
+		if (requireApiVersion('1.1.13')) {
 			const currentPath = this.app.workspace.getActiveFile()?.path ?? '';
-			return fm.getNewFileParent(currentPath);
+			return this.app.fileManager.getNewFileParent(currentPath);
 		}
 		return this.app.vault.getRoot();
 	}
@@ -777,13 +772,32 @@ export default class GestureNav extends Plugin {
 			app: this.app,
 			scrollToTop: this.scrollToTop.bind(this),
 			scrollToBottom: this.scrollToBottom.bind(this),
-			navigateSibling: this.navigateSibling.bind(this),
+			navigateSibling: (delta: number) => {
+				void this.navigateSibling(delta).catch((error: unknown) => {
+					console.error('Failed to navigate to a sibling note', error);
+				});
+			},
 			cycleTab: this.cycleTab.bind(this),
-			openNewTab: this.openNewTab.bind(this),
+			openNewTab: () => {
+				void this.openNewTab().catch((error: unknown) => {
+					console.error('Failed to open a new tab', error);
+				});
+			},
 		};
 	}
 }
 
+
+type GestureSettingRow = {
+	name: string;
+	desc?: string;
+} & ({ render: (setting: Setting) => void | (() => void) } | { render?: never });
+
+interface GestureSettingGroup {
+	type: 'group';
+	heading: string;
+	items: GestureSettingRow[];
+}
 
 class GestureNavSettingTab extends PluginSettingTab {
 	plugin: GestureNav;
@@ -793,199 +807,177 @@ class GestureNavSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return this.createSettingGroups();
+	}
+
+	// Obsidian before 1.13 calls display(); newer versions render the definitions.
 	display(): void {
-		const { containerEl } = this;
+		this.renderLegacySettings();
+	}
 
-		containerEl.empty();
+	private refreshSettings() {
+		if (requireApiVersion('1.13.0')) {
+			this.update();
+		} else {
+			this.renderLegacySettings();
+		}
+	}
 
+	private renderLegacySettings() {
+		this.containerEl.empty();
+		for (const group of this.createSettingGroups()) {
+			new Setting(this.containerEl).setName(group.heading).setHeading();
+			for (const definition of group.items) {
+				const row = new Setting(this.containerEl).setName(definition.name);
+				if (definition.desc) row.setDesc(definition.desc);
+				definition.render?.(row);
+			}
+		}
+	}
+
+	private createSettingGroups(): GestureSettingGroup[] {
 		const strings = getStrings(this.plugin.settings.language);
-
-		containerEl.createEl('h3', { text: strings.sections.appearance });
-
-		new Setting(containerEl)
-			.setName(strings.settings.language.name)
-			.setDesc(strings.settings.language.desc)
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOptions({
-						en: getStrings('en').languageName,
-						ko: getStrings('ko').languageName,
-					})
+		const appearance: GestureSettingRow[] = [
+			{
+				...strings.settings.language,
+				render: (row) => { row.addDropdown((dropdown) => dropdown
+					.addOptions({ en: getStrings('en').languageName, ko: getStrings('ko').languageName })
 					.setValue(this.plugin.settings.language)
 					.onChange(async (value) => {
 						this.plugin.settings.language = value as Locale;
 						await this.plugin.saveSettings();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(strings.settings.triggerKey.name)
-			.setDesc(strings.settings.triggerKey.desc)
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOptions({
-						[TrigerKey.RIGHT_CLICK]:
-							strings.settings.triggerKey.options.rightClick,
-						// [TrigerKey.WHEEL_CLICK]:
-						// 	strings.settings.triggerKey.options.wheelClick,
-					})
+						this.refreshSettings();
+					})); },
+			},
+			{
+				name: strings.settings.triggerKey.name,
+				desc: strings.settings.triggerKey.desc,
+				render: (row) => { row.addDropdown((dropdown) => dropdown
+					.addOptions({ [TrigerKey.RIGHT_CLICK]: strings.settings.triggerKey.options.rightClick })
 					.setValue(String(this.plugin.settings.trigerkey))
 					.onChange(async (value) => {
-						this.plugin.settings.trigerkey = Number(value) as TrigerKey;
+						this.plugin.settings.trigerkey = Number(value);
 						await this.plugin.saveSettings();
-					}),
-			);
-
-		// Drawing toggle
-		new Setting(containerEl)
-			.setName(strings.settings.enableDrawing.name)
-			.setDesc(strings.settings.enableDrawing.desc)
-			.addToggle((toggle) =>
-				toggle
+					})); },
+			},
+			{
+				...strings.settings.enableDrawing,
+				render: (row) => { row.addToggle((toggle) => toggle
 					.setValue(this.plugin.settings.enableDrawing)
 					.onChange(async (value) => {
 						this.plugin.settings.enableDrawing = value;
 						await this.plugin.saveSettings();
-					}),
-			);
-
-		// Stroke color settings
-		new Setting(containerEl)
-			.setName(strings.settings.strokeColor.name)
-			.setDesc(strings.settings.strokeColor.desc)
-			.addDropdown((dropdown) => {
-				dropdown
+					})); },
+			},
+			{
+				...strings.settings.strokeColor,
+				render: (row) => { row.addDropdown((dropdown) => dropdown
 					.addOptions({
-						'accent': 'Accent color',
-						'red': 'Red',
-						'orange': 'Orange',
-						'yellow': 'Yellow',
-						'green': 'Green',
-						'blue': 'Blue',
-						'purple': 'Purple',
-						'custom': 'Custom',
+						accent: 'Accent color', red: 'Red', orange: 'Orange', yellow: 'Yellow',
+						green: 'Green', blue: 'Blue', purple: 'Purple', custom: 'Custom',
 					})
-					.setValue(this.plugin.settings.strokeColor || 'accent') // Default to accent
+					.setValue(this.plugin.settings.strokeColor || 'accent')
 					.onChange(async (value) => {
 						this.plugin.settings.strokeColor = value;
 						await this.plugin.saveSettings();
-
-						// Enable custom color input only if custom is selected
-						customColorSetting.setDisabled(value !== 'custom');
-					});
-			});
-
-		// Custom color input
-		const customColorSetting = new Setting(containerEl)
-			.setName(strings.settings.customStrokeColor.name)
-			.setDesc(strings.settings.customStrokeColor.desc)
-			.addText((text) =>
-				text
-					.setPlaceholder('#000000')
-					.setValue(this.plugin.settings.customStrokeColor || '')
-					.onChange(async (value) => {
-						this.plugin.settings.customStrokeColor = value;
-						await this.plugin.saveSettings();
-					}),
-			)
-			.setDisabled(this.plugin.settings.strokeColor !== 'custom'); // Disable unless custom is selected
-	
-		// Line width setting
-		new Setting(containerEl)
-			.setName(strings.settings.lineWidth.name)
-			.setDesc(strings.settings.lineWidth.desc)
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 10, 1) // Set range between 1 and 10
+						this.refreshSettings();
+					})); },
+			},
+			{
+				...strings.settings.customStrokeColor,
+				render: (row) => { row.addText((text) => {
+					text.setPlaceholder('#000000')
+						.setValue(this.plugin.settings.customStrokeColor || '')
+						.onChange(async (value) => {
+							this.plugin.settings.customStrokeColor = value;
+							await this.plugin.saveSettings();
+						});
+					// The native input is available on 1.1.0; Setting.setDisabled is not.
+					text.inputEl.disabled = this.plugin.settings.strokeColor !== 'custom';
+				}); },
+			},
+			{
+				...strings.settings.lineWidth,
+				render: (row) => { row.addSlider((slider) => slider
+					.setLimits(1, 10, 1)
 					.setValue(this.plugin.settings.lineWidth)
 					.onChange(async (value) => {
 						this.plugin.settings.lineWidth = value;
 						await this.plugin.saveSettings();
-					}),
-			);
+					})); },
+			},
+		];
 
-		containerEl.createEl('h3', { text: strings.sections.gestures });
+		const gestures: GestureSettingRow[] = [];
 		const modernEngine = this.plugin.settings.gestureEngine === 'modern-v2';
 		if (modernEngine) {
-			new Setting(containerEl)
-				.setName(strings.settings.enableDiagonalGestures.name)
-				.setDesc(strings.settings.enableDiagonalGestures.desc)
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.enableDiagonalGestures)
-						.onChange(async (value) => {
-							this.plugin.settings.enableDiagonalGestures = value;
-							await this.plugin.saveSettings();
-							this.display();
-						}),
-				);
+			gestures.push({
+				...strings.settings.enableDiagonalGestures,
+				render: (row) => { row.addToggle((toggle) => toggle
+					.setValue(this.plugin.settings.enableDiagonalGestures)
+					.onChange(async (value) => {
+						this.plugin.settings.enableDiagonalGestures = value;
+						await this.plugin.saveSettings();
+						this.refreshSettings();
+					})); },
+			});
 		}
-		containerEl.createEl('p', {
-			text: strings.gestureBindings.title,
-		});
-
-		new Setting(containerEl)
-			.setName(strings.gestureBindings.resetName)
-			.setDesc(strings.gestureBindings.resetDesc)
-			.addButton((button) =>
-				button.setButtonText(strings.gestureBindings.resetButton).onClick(async () => {
-					this.plugin.settings.gestureBindings = {
-						...DEFAULT_GESTURE_BINDINGS,
-					};
-					await this.plugin.saveSettings();
-					this.display();
-				}),
-			);
-
-		const actionOptions = ACTION_IDS.reduce(
-			(acc, action) => {
-				acc[action] = strings.actionLabels[action];
-				return acc;
+		gestures.push(
+			{
+				name: '',
+				desc: strings.gestureBindings.title,
+				render: (row) => { row.setDesc(strings.gestureBindings.title); },
 			},
-			{} as Record<string, string>,
+			{
+				name: strings.gestureBindings.resetName,
+				desc: strings.gestureBindings.resetDesc,
+				render: (row) => { row.addButton((button) => button
+					.setButtonText(strings.gestureBindings.resetButton)
+					.onClick(async () => {
+						this.plugin.settings.gestureBindings = { ...DEFAULT_GESTURE_BINDINGS };
+						await this.plugin.saveSettings();
+						this.refreshSettings();
+					})); },
+			},
 		);
-
+		const actionOptions = ACTION_IDS.reduce((options, action) => {
+			options[action] = strings.actionLabels[action];
+			return options;
+		}, {} as Record<string, string>);
 		for (const meta of GESTURE_META) {
-			if (meta.diagonal && !(modernEngine && this.plugin.settings.enableDiagonalGestures)) {
-				continue;
-			}
-			const row = new Setting(containerEl)
-				.setName(`${meta.icon}  ${this.plugin.getGestureLabel(meta.key)}`)
-				.addDropdown((dropdown) =>
-					dropdown
+			if (meta.diagonal && !(modernEngine && this.plugin.settings.enableDiagonalGestures)) continue;
+			const customCommand = this.plugin.settings.gestureBindings[meta.key] === 'custom-command';
+			gestures.push({
+				name: `${meta.icon}  ${this.plugin.getGestureLabel(meta.key)}`,
+				desc: customCommand ? strings.settings.customCommandWarning : undefined,
+				render: (row) => {
+					row.addDropdown((dropdown) => dropdown
 						.addOptions(actionOptions)
-						.setValue(
-							this.plugin.settings.gestureBindings[meta.key] ?? 'none',
-						)
+						.setValue(this.plugin.settings.gestureBindings[meta.key] ?? 'none')
 						.onChange(async (value) => {
-							this.plugin.settings.gestureBindings[meta.key] =
-								value as ActionId;
+							this.plugin.settings.gestureBindings[meta.key] = value as ActionId;
 							await this.plugin.saveSettings();
-							this.display();
-						}),
-				);
-
-			if (this.plugin.settings.gestureBindings[meta.key] === 'custom-command') {
-				row.addText((text) =>
-					text
-						.setPlaceholder('command:id')
-						.setValue(this.plugin.getCustomCommandId(meta.key))
-						.onChange(async (value) => {
-							this.plugin.settings.customCommandIds[meta.key] = value.trim();
-							await this.plugin.saveSettings();
-						}),
-				);
-				row.setDesc(strings.settings.customCommandWarning);
-			}
+							this.refreshSettings();
+						}));
+					if (customCommand) {
+						row.addText((text) => text
+							.setPlaceholder('Command ID')
+							.setValue(this.plugin.getCustomCommandId(meta.key))
+							.onChange(async (value) => {
+								this.plugin.settings.customCommandIds[meta.key] = value.trim();
+								await this.plugin.saveSettings();
+							}));
+					}
+				},
+			});
 		}
 
-		containerEl.createEl('h3', { text: strings.sections.actions });
-		new Setting(containerEl)
-			.setName(strings.settings.gestureEngine.name)
-			.setDesc(strings.settings.gestureEngine.desc)
-			.addDropdown((dropdown) =>
-				dropdown
+		const actions: GestureSettingRow[] = [
+			{
+				name: strings.settings.gestureEngine.name,
+				desc: strings.settings.gestureEngine.desc,
+				render: (row) => { row.addDropdown((dropdown) => dropdown
 					.addOptions({
 						'modern-v2': strings.settings.gestureEngine.options.modern,
 						'legacy-v1': strings.settings.gestureEngine.options.legacy,
@@ -994,110 +986,98 @@ class GestureNavSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.gestureEngine = value as GestureEngine;
 						await this.plugin.saveSettings();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(strings.settings.newTabBehavior.name)
-			.setDesc(strings.settings.newTabBehavior.desc)
-			.addDropdown((dropdown) =>
-				dropdown
+						this.refreshSettings();
+					})); },
+			},
+			{
+				name: strings.settings.newTabBehavior.name,
+				desc: strings.settings.newTabBehavior.desc,
+				render: (row) => { row.addDropdown((dropdown) => dropdown
 					.addOptions({
 						empty: strings.settings.newTabBehavior.options.empty,
 						current: strings.settings.newTabBehavior.options.current,
-						'new-note':
-							strings.settings.newTabBehavior.options.newNote,
+						'new-note': strings.settings.newTabBehavior.options.newNote,
 					})
 					.setValue(this.plugin.settings.newTabBehavior)
 					.onChange(async (value) => {
 						this.plugin.settings.newTabBehavior = value as NewTabBehavior;
 						await this.plugin.saveSettings();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(strings.settings.showContextMenuOnCancel.name)
-			.setDesc(strings.settings.showContextMenuOnCancel.desc)
-			.addToggle((toggle) =>
-				toggle
+						this.refreshSettings();
+					})); },
+			},
+			{
+				...strings.settings.showContextMenuOnCancel,
+				render: (row) => { row.addToggle((toggle) => toggle
 					.setValue(this.plugin.settings.showContextMenuOnCancel)
 					.onChange(async (value) => {
 						this.plugin.settings.showContextMenuOnCancel = value;
 						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(strings.settings.debugMode.name)
-			.setDesc(strings.settings.debugMode.desc)
-			.addToggle((toggle) =>
-				toggle
+					})); },
+			},
+			{
+				...strings.settings.debugMode,
+				render: (row) => { row.addToggle((toggle) => toggle
 					.setValue(this.plugin.settings.debugMode)
 					.onChange(async (value) => {
 						this.plugin.settings.debugMode = value;
 						await this.plugin.saveSettings();
-						this.display();
-					}),
-			);
-
+						this.refreshSettings();
+					})); },
+			},
+		];
+		const groups: GestureSettingGroup[] = [
+			{ type: 'group', heading: strings.sections.appearance, items: appearance },
+			{ type: 'group', heading: strings.sections.gestures, items: gestures },
+			{ type: 'group', heading: strings.sections.actions, items: actions },
+		];
 		if (this.plugin.settings.debugMode) {
-			containerEl.createEl('h3', { text: strings.debug.commandsTitle });
-			containerEl.createEl('p', { text: strings.debug.requestNote });
-
-			const searchSetting = new Setting(containerEl)
-				.setName(strings.debug.searchLabel)
-				.setDesc(strings.debug.searchDesc);
-
-			const resultsContainer = containerEl.createDiv({
-				cls: 'gesture-command-results',
+			groups.push({
+				type: 'group',
+				heading: strings.debug.commandsTitle,
+				items: [
+					{
+						name: '',
+						desc: strings.debug.requestNote,
+						render: (row) => { row.setDesc(strings.debug.requestNote); },
+					},
+					{
+						name: strings.debug.searchLabel,
+						desc: strings.debug.searchDesc,
+						render: (row) => this.renderCommandSearch(row),
+					},
+				],
 			});
-
-			const renderResults = (query: string) => {
-				resultsContainer.empty();
-				const q = query.trim().toLowerCase();
-				const commandsApi = (this.app as App & {
-					commands?: { listCommands: () => Array<{ id: string; name: string }> };
-				}).commands;
-				const commands = (commandsApi?.listCommands() ?? [])
-					.filter((cmd: { id: string; name: string }) => {
-						if (!q) return true;
-						return (
-							cmd.name.toLowerCase().includes(q) ||
-							cmd.id.toLowerCase().includes(q)
-						);
-					})
-					.slice(0, 100);
-
-				if (commands.length === 0) {
-					resultsContainer.createEl('div', {
-						text: strings.debug.noResults,
-						cls: 'gesture-command-empty',
-					});
-					return;
-				}
-
-				for (const cmd of commands) {
-					const row = resultsContainer.createDiv({
-						cls: 'gesture-command-row',
-					});
-					row.createEl('div', { text: cmd.id, cls: 'gesture-command-id' });
-					row.createEl('div', {
-						text: cmd.name,
-						cls: 'gesture-command-name',
-					});
-				}
-			};
-
-			searchSetting.addText((text) =>
-				text
-					.setPlaceholder(strings.debug.searchPlaceholder)
-					.onChange((value) => renderResults(value)),
-			);
-
-			renderResults('');
 		}
+		return groups;
+	}
 
+	private renderCommandSearch(searchSetting: Setting) {
+		const strings = getStrings(this.plugin.settings.language);
+		searchSetting.setClass('gesture-command-search');
+		const resultsContainer = searchSetting.controlEl.createDiv({ cls: 'gesture-command-results' });
+		const renderResults = (query: string) => {
+			resultsContainer.empty();
+			const q = query.trim().toLowerCase();
+			const commandsApi = (this.app as App & {
+				commands?: { listCommands: () => Array<{ id: string; name: string }> };
+			}).commands;
+			const commands = (commandsApi?.listCommands() ?? [])
+				.filter((cmd) => !q || cmd.name.toLowerCase().includes(q) || cmd.id.toLowerCase().includes(q))
+				.slice(0, 100);
+			if (commands.length === 0) {
+				resultsContainer.createDiv({ text: strings.debug.noResults, cls: 'gesture-command-empty' });
+				return;
+			}
+			for (const cmd of commands) {
+				const row = resultsContainer.createDiv({ cls: 'gesture-command-row' });
+				row.createDiv({ text: cmd.id, cls: 'gesture-command-id' });
+				row.createDiv({ text: cmd.name, cls: 'gesture-command-name' });
+			}
+		};
+		searchSetting.addText((text) => text
+			.setPlaceholder(strings.debug.searchPlaceholder)
+			.onChange((value) => renderResults(value)));
+		searchSetting.controlEl.appendChild(resultsContainer);
+		renderResults('');
 	}
 }

@@ -1,4 +1,4 @@
-# Mouse Navigation Plugin for Obsidian
+# Mouse Navigation
 
 ## Overview
 
